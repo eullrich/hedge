@@ -1,0 +1,1 @@
+"""Desktop application source code."""
