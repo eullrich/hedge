@@ -10,6 +10,7 @@ Rectangle {
 
     // Signals
     signal pairSelected(string coin1, string coin2)
+    signal backtestRequested(string coin1, string coin2)
     signal refreshRequested()
 
     // Column widths - all equal
@@ -271,6 +272,25 @@ Rectangle {
                         var parts = pairData.split("/")
                         if (parts.length === 2) {
                             root.pairSelected(parts[0], parts[1])
+                        }
+                    }
+                }
+            }
+
+            Label {
+                text: "Backtest"
+                color: Material.accent
+                font.pixelSize: 14
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        // Get pair data from the model
+                        var pairData = watchlistModel.data(watchlistModel.index(cellRow, 0), Qt.DisplayRole)
+                        var parts = pairData.split("/")
+                        if (parts.length === 2) {
+                            root.backtestRequested(parts[0], parts[1])
                         }
                     }
                 }

@@ -266,10 +266,82 @@ class MarketDataModel(QAbstractListModel):
         if self._selected_category != category:
             self._selected_category = category
             self.selectedCategoryChanged.emit()
-
             self.beginResetModel()
             self._apply_filters()
             self.endResetModel()
+
+    @pyqtSlot()
+    def loadFromDatabase(self):
+        """Load simple coin list from database (no API calls)."""
+        print("📊 Loading coin list from database...")
+
+        self.beginResetModel()
+
+        try:
+            from src.database import DatabaseManager
+            from datetime import datetime, timedelta
+
+            db = DatabaseManager()
+
+            with db.get_session() as session:
+                # Get all unique coin_ids from OHLCV data
+                from sqlalchemy import distinct
+                from src.database.ohlcv_models import OHLCVData
+
+                coins = session.query(distinct(OHLCVData.coin_id)).all()
+                coin_ids = sorted([c[0] for c in coins if c[0]])
+
+                items = []
+                for symbol in coin_ids:
+                    # Get latest price from most recent candle
+                    end_date = datetime.now()
+                    start_date = end_date - timedelta(days=1)
+
+                    latest = session.query(OHLCVData).filter(
+                        OHLCVData.coin_id == symbol,
+                        OHLCVData.granularity == '1hour',
+                        OHLCVData.timestamp >= start_date
+                    ).order_by(OHLCVData.timestamp.desc()).first()
+
+                    if latest:
+                        # Get price from 24h ago for change calculation
+                        price_24h_ago = session.query(OHLCVData).filter(
+                            OHLCVData.coin_id == symbol,
+                            OHLCVData.granularity == '1hour',
+                            OHLCVData.timestamp >= start_date
+                        ).order_by(OHLCVData.timestamp.asc()).first()
+
+                        change_24h_pct = 0.0
+                        if price_24h_ago and price_24h_ago.close > 0:
+                            change_24h_pct = ((latest.close - price_24h_ago.close) / price_24h_ago.close) * 100
+
+                        items.append({
+                            'symbol': symbol,
+                            'lastPrice': float(latest.close),
+                            'change24h': 0.0,
+                            'change24hPct': float(change_24h_pct),
+                            'fundingRate': 0.0,
+                            'volume': float(latest.volume),
+                            'openInterest': 0.0,
+                            'leverage': '50x',
+                            'category': 'PERP',
+                            'categories': self.CATEGORY_MAP.get(symbol, []),
+                            'isTrending': False,
+                        })
+
+                self._all_items = items
+                self._apply_filters()
+
+                print(f"✅ Loaded {len(self._all_items)} coins from database")
+                self.dataLoaded.emit()
+
+        except Exception as e:
+            print(f"❌ Error loading from database: {e}")
+            import traceback
+            traceback.print_exc()
+            self._items = []
+
+        self.endResetModel()
 
     @pyqtProperty(str, notify=searchQueryChanged)
     def searchQuery(self):

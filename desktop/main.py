@@ -20,10 +20,12 @@ from desktop.src.qml_bridge.discovery_model import DiscoveryModel
 from desktop.src.qml_bridge.analysis_model import AnalysisModel
 from desktop.src.qml_bridge.backtest_model import BacktestModel
 from desktop.src.qml_bridge.market_data_model import MarketDataModel
+from desktop.src.qml_bridge.basket_model import BasketModel
 from src.database import DatabaseManager
 from src.api import HyperliquidClient
 from src.utils.db_status_checker import DatabaseStatusChecker
 from src.services.data_updater import DataUpdater
+from src.services.background_updater import BackgroundUpdater
 import threading
 
 
@@ -44,9 +46,8 @@ def main():
     api_client = HyperliquidClient()  # Singleton - shared across app
     status_checker = DatabaseStatusChecker(db_manager)
 
-    # DISABLED: Automatic update on startup (use Force Refresh button instead)
-    # This avoids rate limiting issues and gives you control over when to update
-    print("ℹ️  Automatic updates disabled - use 'Force Refresh' button to update data")
+    # Background auto-updates are enabled
+    print("ℹ️  Background auto-updates enabled - data updates every 5 minutes")
 
     def startup_update_DISABLED():
         try:
@@ -141,12 +142,14 @@ def main():
     analysis_model = AnalysisModel(db_manager, api_client)
     backtest_model = BacktestModel(db_manager, api_client)
     market_data_model = MarketDataModel(api_client)
+    basket_model = BasketModel(db_manager)
 
     engine.rootContext().setContextProperty("watchlistModel", watchlist_model)
     engine.rootContext().setContextProperty("discoveryModel", discovery_model)
     engine.rootContext().setContextProperty("analysisModel", analysis_model)
     engine.rootContext().setContextProperty("backtestModel", backtest_model)
     engine.rootContext().setContextProperty("marketDataModel", market_data_model)
+    engine.rootContext().setContextProperty("basketModel", basket_model)
 
     # Load main QML application
     qml_file = Path(__file__).parent / "qml" / "MainApp.qml"
@@ -237,6 +240,33 @@ def main():
     root.forceRefreshData.connect(on_force_refresh_data)
     root.pairSelected.connect(on_pair_selected)
 
+    # Initialize background updater
+    def on_background_update_complete():
+        """Callback when background update completes - refresh watchlist."""
+        try:
+            watchlist_model.refresh()
+            print("🔄 Watchlist refreshed after background update")
+        except Exception as e:
+            print(f"⚠️  Error refreshing watchlist: {e}")
+
+    def on_background_status_change(status: str):
+        """Callback when background updater status changes."""
+        try:
+            root.setStatus(status)
+        except Exception as e:
+            print(f"⚠️  Error updating status: {e}")
+
+    background_updater = BackgroundUpdater(
+        db_manager=db_manager,
+        api_client=api_client,
+        update_interval_minutes=5,  # Update every 5 minutes
+        on_update_complete=on_background_update_complete,
+        on_status_change=on_background_status_change
+    )
+
+    # Start background updater
+    background_updater.start()
+
     print("=" * 70)
     print("Hedge - Crypto Pair Trading Analysis (Qt Quick/QML)")
     print("=" * 70)
@@ -246,9 +276,16 @@ def main():
     print("Discovery - Find new trading pairs")
     print("Analysis - Deep dive into pair analysis")
     print("Backtest - Test strategies")
+    print("🔄 Background data updates: Every 5 minutes")
     print("=" * 70)
 
-    return app.exec()
+    # Run application
+    exit_code = app.exec()
+
+    # Cleanup: Stop background updater
+    background_updater.stop()
+
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -24,9 +24,11 @@ class DiscoveryModel(QAbstractTableModel):
         self.api_client = api_client
         self.watchlist_model = watchlist_model
         self._items: List[Dict[str, Any]] = []
+        self._all_items: List[Dict[str, Any]] = []  # Unfiltered results
         self._available_tokens: List[str] = []
         self._sort_column = 'correlation'  # Default sort by correlation
         self._sort_ascending = False  # Descending by default
+        self._filter_text = ''  # Current filter text
 
         # Load available tokens from Hyperliquid on init
         self._load_available_tokens()
@@ -286,7 +288,7 @@ class DiscoveryModel(QAbstractTableModel):
                 print(f"✅ Found {len(results)} pairs from database")
 
             # Convert to display items
-            self._items = []
+            self._all_items = []
             for pair_data in results:  # Show all results, not just top 20
                 # Determine signal based on z-score
                 zscore = float(pair_data['zscore'])
@@ -296,7 +298,7 @@ class DiscoveryModel(QAbstractTableModel):
                 elif zscore < -2.0:
                     signal = "LONG"
 
-                self._items.append({
+                self._all_items.append({
                     'pair': f"{pair_data['coin1']}/{pair_data['coin2']}",
                     'correlation': float(pair_data['correlation']),
                     'is_cointegrated': pair_data.get('is_cointegrated', False),
@@ -307,7 +309,8 @@ class DiscoveryModel(QAbstractTableModel):
                     'change_7d': float(pair_data.get('change_7d', 0.0)),
                 })
 
-            # Sort items with current sort settings
+            # Apply current filter and sort
+            self._apply_filter()
             self._sort_items()
 
             print(f"📋 Displaying {len(self._items)} pairs")
@@ -363,23 +366,74 @@ class DiscoveryModel(QAbstractTableModel):
         self._sort_items()
         self.endResetModel()
 
+    @pyqtSlot('QVariantList', 'QVariantList')
+    def addBasketPairToWatchlist(self, long_coins: list, short_coins: list):
+        """Add the Long/Short basket pair to watchlist."""
+        try:
+            if not self.watchlist_model:
+                print(f"⚠️ Watchlist model not available")
+                return
+
+            # Convert to uppercase
+            long_coins_upper = [c.upper() for c in long_coins]
+            short_coins_upper = [c.upper() for c in short_coins]
+
+            # Add the basket pair to watchlist using addBasketPair method
+            self.watchlist_model.addBasketPair(long_coins_upper, short_coins_upper)
+            print(f"✅ Added {'+'.join(long_coins_upper)} / {'+'.join(short_coins_upper)} to watchlist")
+
+        except Exception as e:
+            print(f"❌ Error adding to watchlist: {e}")
+            import traceback
+            traceback.print_exc()
+
+    @pyqtSlot(str, 'QVariantList', 'QVariantList')
+    def addTokenToWatchlist(self, token: str, long_coins: list, short_coins: list):
+        """Add a token pair with the Long/Short baskets to watchlist."""
+        try:
+            if not self.watchlist_model:
+                print(f"⚠️ Watchlist model not available")
+                return
+
+            # Add the token as numerator, basket as denominator
+            # Format: Token / (Long+Short) basket pair
+            self.watchlist_model.addPair([token], long_coins + short_coins)
+            print(f"✅ Added {token} / {'+'.join(long_coins + short_coins)} to watchlist")
+
+        except Exception as e:
+            print(f"❌ Error adding to watchlist: {e}")
+            import traceback
+            traceback.print_exc()
+
     @pyqtSlot(int)
     def addToWatchlist(self, index: int):
         """Add discovered pair to watchlist."""
         if 0 <= index < len(self._items):
             try:
                 item = self._items[index]
-                pair_parts = item['pair'].split('/')
-                if len(pair_parts) == 2:
-                    coin1 = pair_parts[0]
-                    coin2 = pair_parts[1]
+                pair_str = item['pair']
 
-                    # Add to watchlist model to update UI
-                    if self.watchlist_model:
-                        self.watchlist_model.addPair(coin1, coin2)
-                        print(f"✅ Added {coin1}/{coin2} to watchlist")
-                    else:
-                        print(f"⚠️ Watchlist model not available")
+                # Check if it's a pair (contains /) or a single token
+                if '/' in pair_str:
+                    # It's a basket pair like "BTC+ETH / SOL+DOGE"
+                    pair_parts = pair_str.split('/')
+                    if len(pair_parts) == 2:
+                        coin1 = pair_parts[0].strip()
+                        coin2 = pair_parts[1].strip()
+
+                        # Convert "BTC+ETH" to list ["BTC", "ETH"]
+                        coin1_list = [c.strip() for c in coin1.split('+')]
+                        coin2_list = [c.strip() for c in coin2.split('+')]
+
+                        # Add to watchlist model
+                        if self.watchlist_model:
+                            self.watchlist_model.addPair(coin1_list, coin2_list)
+                            print(f"✅ Added {coin1}/{coin2} to watchlist")
+                        else:
+                            print(f"⚠️ Watchlist model not available")
+                else:
+                    # Single token - can't add to watchlist without a pair
+                    print(f"⚠️ Cannot add single token '{pair_str}' to watchlist. Please select from a basket analysis.")
 
             except Exception as e:
                 print(f"❌ Error adding to watchlist: {e}")
@@ -410,3 +464,229 @@ class DiscoveryModel(QAbstractTableModel):
     def refreshAvailableTokens(self):
         """Refresh the list of available tokens from Hyperliquid API."""
         self._load_available_tokens()
+
+    @pyqtSlot(str)
+    def filterByCoin(self, search_text: str):
+        """Filter displayed pairs by coin name."""
+        self._filter_text = search_text.strip().upper()
+        self.beginResetModel()
+        self._apply_filter()
+        self._sort_items()
+        self.endResetModel()
+
+    def _apply_filter(self):
+        """Apply current filter to items."""
+        if not self._filter_text:
+            # No filter, show all items
+            self._items = self._all_items.copy()
+        else:
+            # Filter items where either coin matches the search text
+            self._items = [
+                item for item in self._all_items
+                if self._filter_text in item['pair']
+            ]
+
+    @pyqtSlot('QVariantList', 'QVariantList', int)
+    def scanBaskets(self, numerator_coins: list, denominator_coins: list, timeframe_index: int):
+        """
+        Show all tokens with correlation and z-score calculated against the Long/Short basket pair.
+
+        Args:
+            numerator_coins: List of coin IDs for Long basket
+            denominator_coins: List of coin IDs for Short basket
+            timeframe_index: 0 = Scalping (1 day), 1 = Intraday (7 days), 2 = Swing (60 days)
+        """
+        print(f"📊 Analyzing all tokens against: {'+'.join(numerator_coins)} / {'+'.join(denominator_coins)}")
+
+        self.beginResetModel()
+
+        try:
+            import pandas as pd
+            import numpy as np
+            from datetime import datetime, timedelta
+            from src.services.basket_calculator import BasketCalculator
+            from src.database.ohlcv_models import OHLCVData
+            from sqlalchemy import distinct
+
+            # Map timeframe index to days and granularity
+            timeframe_config = {
+                0: {'days': 1, 'granularity': '1hour'},
+                1: {'days': 7, 'granularity': '1hour'},
+                2: {'days': 60, 'granularity': '4hour'},
+            }
+            config = timeframe_config.get(timeframe_index, timeframe_config[1])
+            days = config['days']
+            granularity = config['granularity']
+
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+
+            calculator = BasketCalculator(self.db)
+
+            # Get all available tokens from database
+            with self.db.get_session() as session:
+                coins = session.query(distinct(OHLCVData.coin_id)).order_by(OHLCVData.coin_id).all()
+                all_tokens = sorted([coin[0] for coin in coins])
+
+            print(f"📋 Found {len(all_tokens)} tokens in database")
+
+            # Calculate the Long/Short basket ratio first
+            with self.db.get_session() as session:
+                long_basket_id = calculator.create_basket_from_coins(
+                    session,
+                    f"temp_long_{datetime.now().timestamp()}",
+                    [c.upper() for c in numerator_coins]
+                )
+                short_basket_id = calculator.create_basket_from_coins(
+                    session,
+                    f"temp_short_{datetime.now().timestamp()}",
+                    [c.upper() for c in denominator_coins]
+                )
+
+                if not long_basket_id or not short_basket_id:
+                    print("❌ Failed to create temporary baskets")
+                    self._items = []
+                    self.scanComplete.emit(0)
+                    self.endResetModel()
+                    return
+
+                # Calculate basket prices
+                long_df = calculator.calculate_basket_price(
+                    session, long_basket_id, start_date, end_date, granularity
+                )
+                short_df = calculator.calculate_basket_price(
+                    session, short_basket_id, start_date, end_date, granularity
+                )
+
+                if long_df is None or short_df is None:
+                    print("❌ Failed to calculate basket prices")
+                    self._items = []
+                    self.scanComplete.emit(0)
+                    self.endResetModel()
+                    return
+
+                # Align basket timestamps
+                basket_df = long_df.join(short_df, how='inner', lsuffix='_long', rsuffix='_short')
+
+                if len(basket_df) < 10:
+                    print("❌ Insufficient overlapping basket data")
+                    self._items = []
+                    self.scanComplete.emit(0)
+                    self.endResetModel()
+                    return
+
+                # Calculate basket ratio
+                basket_long_prices = basket_df['close_long'].values
+                basket_short_prices = basket_df['close_short'].values
+                basket_ratio = basket_long_prices / basket_short_prices
+
+                # Now analyze each token against this basket pair
+                results = []
+                processed = 0
+
+                for symbol in all_tokens:
+                    try:
+                        # Get token OHLCV data
+                        token_data = self.db.get_ohlcv_data(
+                            session,
+                            coin_id=symbol.upper(),
+                            start_date=start_date,
+                            end_date=end_date,
+                            granularity=granularity
+                        )
+
+                        if not token_data or len(token_data) < 10:
+                            continue
+
+                        # Convert to DataFrame for alignment
+                        token_df = pd.DataFrame([{
+                            'timestamp': c.timestamp,
+                            'close': float(c.close)
+                        } for c in token_data])
+                        token_df.set_index('timestamp', inplace=True)
+
+                        # Align token prices with basket ratio
+                        aligned = basket_df.join(token_df, how='inner', rsuffix='_token')
+
+                        if len(aligned) < 10:
+                            continue
+
+                        token_prices = aligned['close'].values
+                        aligned_basket_ratio = (aligned['close_long'].values / aligned['close_short'].values)
+
+                        # Calculate correlation between token and basket ratio
+                        correlation = float(np.corrcoef(token_prices, aligned_basket_ratio)[0, 1])
+
+                        # Calculate token/basket-ratio as a "pair"
+                        pair_ratio = token_prices / aligned_basket_ratio
+                        ratio_mean = np.mean(pair_ratio)
+                        ratio_std = np.std(pair_ratio)
+                        current_ratio = pair_ratio[-1]
+                        zscore = (current_ratio - ratio_mean) / ratio_std if ratio_std > 0 else 0.0
+
+                        # 24h and 7d changes for the token
+                        change_24h = 0.0
+                        change_7d = 0.0
+
+                        if granularity == '1hour' and len(token_prices) >= 24:
+                            price_24h_ago = token_prices[-24]
+                            change_24h = ((token_prices[-1] - price_24h_ago) / price_24h_ago) * 100
+
+                        if granularity == '1hour' and len(token_prices) >= 168:
+                            price_7d_ago = token_prices[-168]
+                            change_7d = ((token_prices[-1] - price_7d_ago) / price_7d_ago) * 100
+                        elif granularity == '4hour' and len(token_prices) >= 42:
+                            price_7d_ago = token_prices[-42]
+                            change_7d = ((token_prices[-1] - price_7d_ago) / price_7d_ago) * 100
+
+                        # Cointegration test
+                        is_cointegrated = False
+                        try:
+                            from statsmodels.tsa.stattools import coint
+                            _, p_value, _ = coint(pd.Series(token_prices), pd.Series(aligned_basket_ratio))
+                            is_cointegrated = p_value < 0.05
+                        except:
+                            pass
+
+                        # Signal based on z-score
+                        signal = "NEUTRAL"
+                        if zscore > 2.0:
+                            signal = "SHORT"
+                        elif zscore < -2.0:
+                            signal = "LONG"
+
+                        results.append({
+                            'pair': symbol,
+                            'correlation': float(correlation),
+                            'is_cointegrated': is_cointegrated,
+                            'zscore': float(zscore),
+                            'signal': signal,
+                            'price': float(token_prices[-1]),
+                            'change_24h': float(change_24h),
+                            'change_7d': float(change_7d),
+                        })
+
+                        processed += 1
+                        if processed % 50 == 0:
+                            print(f"  Progress: {processed}/{len(all_tokens)} tokens analyzed...")
+
+                    except Exception as e:
+                        print(f"⚠️  Error analyzing {symbol}: {e}")
+                        continue
+
+            print(f"✅ Analyzed {len(results)} tokens")
+
+            self._all_items = results
+            self._apply_filter()
+            self._sort_items()
+
+            self.scanComplete.emit(len(self._items))
+
+        except Exception as e:
+            print(f"❌ Error analyzing tokens: {e}")
+            import traceback
+            traceback.print_exc()
+            self._items = []
+            self.scanComplete.emit(0)
+
+        self.endResetModel()

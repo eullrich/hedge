@@ -50,6 +50,12 @@ ApplicationWindow {
                 analysisView.loadPair(coin1, coin2)
             }
 
+            onBacktestRequested: function(coin1, coin2) {
+                // Switch to backtest tab and load pair
+                tabBar.currentIndex = 3
+                backtestView.loadPair(coin1, coin2)
+            }
+
             onRefreshRequested: {
                 // Forward to main window handler
                 mainWindow.refreshData()
@@ -63,16 +69,28 @@ ApplicationWindow {
                 tabBar.currentIndex = 2
                 analysisView.loadPair(coin1, coin2)
             }
+
+            onBacktestRequested: function(coin1, coin2) {
+                // Switch to backtest tab and load pair
+                tabBar.currentIndex = 3
+                backtestView.loadPair(coin1, coin2)
+            }
         }
 
         // Page 3: Analysis
         AnalysisView {
             id: analysisView
+
+            onBacktestRequested: function(coin1, coin2) {
+                // Switch to backtest tab and load pair
+                tabBar.currentIndex = 3
+                backtestView.loadPair(coin1, coin2)
+            }
         }
 
         // Page 4: Backtest
         BacktestView {
-            // Coming soon
+            id: backtestView
         }
     }
 

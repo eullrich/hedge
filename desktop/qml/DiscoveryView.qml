@@ -10,6 +10,25 @@ Rectangle {
 
     // Signals
     signal pairSelected(string coin1, string coin2)
+    signal backtestRequested(string coin1, string coin2)
+
+    // State for selected baskets
+    property var longCoins: []
+    property var shortCoins: []
+    property int selectedRow: -1
+
+    function triggerScan() {
+        console.log("triggerScan called - longCoins:", longCoins, "shortCoins:", shortCoins)
+        if (longCoins.length > 0 && shortCoins.length > 0) {
+            scanningIndicator.visible = true
+            statusLabel.text = "Analyzing " + longCoins.join('+') + " / " + shortCoins.join('+') + "..."
+            statusLabel.opacity = 0.7
+            console.log("Calling discoveryModel.scanBaskets...")
+            discoveryModel.scanBaskets(longCoins, shortCoins, timeframeCombo.currentIndex)
+        } else {
+            console.log("Not enough coins selected. Need both long and short.")
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -18,7 +37,7 @@ Rectangle {
 
         // Header
         Label {
-            text: "Pair Discovery"
+            text: "Discovery"
             font.pixelSize: 24
             font.weight: Font.Medium
         }
@@ -26,18 +45,76 @@ Rectangle {
         // Controls row
         RowLayout {
             Layout.fillWidth: true
-            spacing: 16
+            spacing: 12
 
             Label {
-                text: "Reference Leg:"
+                text: "Long:"
                 font.pixelSize: 14
             }
 
             Button {
-                id: referenceButton
-                text: marketSelector.selectedSymbol || "Select Market"
-                Layout.preferredWidth: 200
-                onClicked: marketSelector.open()
+                id: longButton
+                text: longCoins.length > 0 ? longCoins.join('+') : "Select..."
+                Layout.preferredWidth: 180
+                onClicked: {
+                    longSelector.open()
+                }
+            }
+
+            Button {
+                text: "+"
+                Layout.preferredWidth: 40
+                enabled: longCoins.length > 0
+                onClicked: {
+                    longSelector.open()
+                }
+            }
+
+            Button {
+                text: "Clear"
+                Layout.preferredWidth: 60
+                enabled: longCoins.length > 0
+                onClicked: {
+                    longCoins = []
+                }
+            }
+
+            Label {
+                text: "÷"
+                font.pixelSize: 18
+                font.weight: Font.Medium
+            }
+
+            Label {
+                text: "Short:"
+                font.pixelSize: 14
+            }
+
+            Button {
+                id: shortButton
+                text: shortCoins.length > 0 ? shortCoins.join('+') : "Select..."
+                Layout.preferredWidth: 180
+                onClicked: {
+                    shortSelector.open()
+                }
+            }
+
+            Button {
+                text: "+"
+                Layout.preferredWidth: 40
+                enabled: shortCoins.length > 0
+                onClicked: {
+                    shortSelector.open()
+                }
+            }
+
+            Button {
+                text: "Clear"
+                Layout.preferredWidth: 60
+                enabled: shortCoins.length > 0
+                onClicked: {
+                    shortCoins = []
+                }
             }
 
             Label {
@@ -53,19 +130,47 @@ Rectangle {
                     "Swing (60 days)"
                 ]
                 currentIndex: 1
-                Layout.preferredWidth: 200
+                Layout.preferredWidth: 160
                 onCurrentIndexChanged: {
-                    // Trigger rescan if we have a reference coin selected
-                    if (marketSelector.selectedSymbol) {
-                        scanningIndicator.visible = true
-                        statusLabel.text = "Loading pairs for " + marketSelector.selectedSymbol + "..."
-                        statusLabel.opacity = 0.7
-                        discoveryModel.scanPairs(marketSelector.selectedSymbol, currentIndex)
-                    }
+                    triggerScan()
                 }
             }
 
             Item { Layout.fillWidth: true }
+
+            Button {
+                text: "Analyze"
+                enabled: selectedRow >= 0
+                onClicked: {
+                    if (selectedRow >= 0) {
+                        var pairData = discoveryModel.data(discoveryModel.index(selectedRow, 0), Qt.DisplayRole)
+                        var parts = pairData.split("/")
+                        if (parts.length === 2) {
+                            root.pairSelected(parts[0].trim(), parts[1].trim())
+                        } else {
+                            // Single token selected, use with current baskets
+                            root.pairSelected(longCoins.join('+'), shortCoins.join('+'))
+                        }
+                    }
+                }
+            }
+
+            Button {
+                text: "Add to Watchlist"
+                enabled: longCoins.length > 0 && shortCoins.length > 0
+                onClicked: {
+                    console.log("Add to Watchlist clicked")
+                    console.log("Long coins:", longCoins, "Short coins:", shortCoins)
+                    discoveryModel.addBasketPairToWatchlist(longCoins, shortCoins)
+                }
+            }
+
+            TextField {
+                id: searchField
+                placeholderText: "Search coin..."
+                Layout.preferredWidth: 120
+                onTextChanged: discoveryModel.filterByCoin(searchField.text)
+            }
 
             BusyIndicator {
                 id: scanningIndicator
@@ -73,17 +178,6 @@ Rectangle {
                 running: visible
                 Layout.preferredWidth: 32
                 Layout.preferredHeight: 32
-            }
-        }
-
-        // Auto-trigger scan when reference leg changes
-        Connections {
-            target: marketSelector
-            function onMarketSelected(symbol) {
-                scanningIndicator.visible = true
-                statusLabel.text = "Loading pairs for " + symbol + "..."
-                statusLabel.opacity = 0.7
-                discoveryModel.scanPairs(symbol, timeframeCombo.currentIndex)
             }
         }
 
@@ -101,8 +195,8 @@ Rectangle {
                 border.width: index === 0 ? 1 : 0
                 border.color: Qt.rgba(1, 1, 1, 0.12)
 
-                property var headerLabels: ["Pair", "Correlation", "Coint", "Z-Score", "Signal", "Price", "24h Change", "7d Change", "Actions"]
-                property var sortColumns: ["pair", "correlation", "is_cointegrated", "zscore", "signal", "price", "change_24h", "change_7d", ""]
+                property var headerLabels: ["Pair", "Correlation", "Coint", "Z-Score", "Signal", "Price", "24h Change", "7d Change"]
+                property var sortColumns: ["pair", "correlation", "is_cointegrated", "zscore", "signal", "price", "change_24h", "change_7d"]
 
                 Label {
                     anchors.fill: parent
@@ -138,16 +232,19 @@ Rectangle {
             columnSpacing: 0
 
             columnWidthProvider: function(column) {
-                // Divide width equally among 9 columns, accounting for margins
-                return (discoveryTable.width - 24) / 9
+                // Divide width equally among 8 columns, accounting for margins
+                return (discoveryTable.width - 24) / 8
             }
 
             delegate: Rectangle {
                 implicitHeight: 60
-                color: hoverHandler.hovered ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.03)
+                color: {
+                    if (selectedRow === row) return Qt.rgba(0.3, 0.5, 0.8, 0.3)
+                    return hoverHandler.hovered ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.03)
+                }
                 radius: 4
-                border.width: 1
-                border.color: hoverHandler.hovered ? Qt.rgba(1, 1, 1, 0.2) : Qt.rgba(1, 1, 1, 0.05)
+                border.width: selectedRow === row ? 2 : 1
+                border.color: selectedRow === row ? Material.accent : (hoverHandler.hovered ? Qt.rgba(1, 1, 1, 0.2) : Qt.rgba(1, 1, 1, 0.05))
 
                 required property int row
                 required property int column
@@ -155,6 +252,13 @@ Rectangle {
 
                 HoverHandler {
                     id: hoverHandler
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        selectedRow = row
+                    }
                 }
 
                 // Column content
@@ -172,7 +276,6 @@ Rectangle {
                             case 5: return priceColumn
                             case 6: return change24hColumn
                             case 7: return change7dColumn
-                            case 8: return actionsColumn
                             default: return null
                         }
                     }
@@ -194,7 +297,7 @@ Rectangle {
         // Status label
         Label {
             id: statusLabel
-            text: "Click 'Scan Pairs' to discover trading opportunities"
+            text: "Select Long and Short baskets to analyze"
             font.pixelSize: 14
             opacity: 0.5
             Layout.fillWidth: true
@@ -208,26 +311,13 @@ Rectangle {
                 scanningIndicator.visible = false
 
                 if (count === 0) {
-                    statusLabel.text = "No correlated pairs found. Try a different reference coin or timeframe."
+                    statusLabel.text = "No data available. Select Long and Short baskets to analyze."
                     statusLabel.opacity = 0.7
                 } else {
-                    statusLabel.text = `Found ${count} correlated pairs`
+                    statusLabel.text = `Showing ${count} basket pair${count > 1 ? 's' : ''}`
                     statusLabel.opacity = 0.5
                 }
             }
-        }
-    }
-
-    // Market selector popup
-    MarketSelector {
-        id: marketSelector
-        anchors.centerIn: parent
-        width: parent.width * 0.85
-        height: parent.height * 0.85
-
-        onMarketSelected: function(symbol) {
-            console.log("Market selected:", symbol)
-            // Symbol is already stored in selectedSymbol property
         }
     }
 
@@ -342,46 +432,45 @@ Rectangle {
         }
     }
 
-    Component {
-        id: actionsColumn
-        Item {
-            RowLayout {
-                anchors.centerIn: parent
-                spacing: 16
 
-                Label {
-                    text: "Analyze"
-                    color: Material.accent
-                    font.pixelSize: 14
+    // Long basket selector
+    BasketSelector {
+        id: longSelector
+        anchors.centerIn: parent
+        width: parent.width * 0.7
+        height: parent.height * 0.8
 
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            // Get pair data from the model
-                            var pairData = discoveryModel.data(discoveryModel.index(cellRow, 0), Qt.DisplayRole)
-                            var parts = pairData.split("/")
-                            if (parts.length === 2) {
-                                root.pairSelected(parts[0], parts[1])
-                            }
-                        }
-                    }
-                }
-
-                Label {
-                    text: "Add to Watchlist"
-                    color: Material.accent
-                    font.pixelSize: 14
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            discoveryModel.addToWatchlist(cellRow)
-                        }
-                    }
-                }
+        onCoinSelected: function(coinId) {
+            if (longCoins.indexOf(coinId) < 0) {
+                longCoins.push(coinId)
+                longCoins = longCoins.slice()  // Force property update
             }
+            triggerScan()
         }
+    }
+
+    // Short basket selector
+    BasketSelector {
+        id: shortSelector
+        anchors.centerIn: parent
+        width: parent.width * 0.7
+        height: parent.height * 0.8
+
+        onCoinSelected: function(coinId) {
+            if (shortCoins.indexOf(coinId) < 0) {
+                shortCoins.push(coinId)
+                shortCoins = shortCoins.slice()  // Force property update
+            }
+            triggerScan()
+        }
+    }
+
+    // Market selector (kept for backwards compatibility, hidden)
+    MarketSelector {
+        id: marketSelector
+        anchors.centerIn: parent
+        width: parent.width * 0.85
+        height: parent.height * 0.85
+        visible: false
     }
 }

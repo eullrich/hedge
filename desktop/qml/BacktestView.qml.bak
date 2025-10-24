@@ -356,7 +356,6 @@ Rectangle {
                         // Max Drawdown
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: 200
                             height: 100
                             color: Qt.rgba(1, 1, 1, 0.05)
                             radius: 8
@@ -364,8 +363,7 @@ Rectangle {
                             border.color: Qt.rgba(1, 1, 1, 0.12)
 
                             ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 8
+                                anchors.centerIn: parent
                                 spacing: 4
 
                                 Label {
@@ -391,7 +389,6 @@ Rectangle {
                         // Win Rate
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: 200
                             height: 100
                             color: Qt.rgba(1, 1, 1, 0.05)
                             radius: 8
@@ -399,8 +396,7 @@ Rectangle {
                             border.color: Qt.rgba(1, 1, 1, 0.12)
 
                             ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 8
+                                anchors.centerIn: parent
                                 spacing: 4
 
                                 Label {
@@ -425,7 +421,6 @@ Rectangle {
                         // Total Trades
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: 200
                             height: 100
                             color: Qt.rgba(1, 1, 1, 0.05)
                             radius: 8
@@ -433,8 +428,7 @@ Rectangle {
                             border.color: Qt.rgba(1, 1, 1, 0.12)
 
                             ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 8
+                                anchors.centerIn: parent
                                 spacing: 4
 
                                 Label {
@@ -459,7 +453,6 @@ Rectangle {
                         // Profitable Trades
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: 200
                             height: 100
                             color: Qt.rgba(1, 1, 1, 0.05)
                             radius: 8
@@ -467,8 +460,7 @@ Rectangle {
                             border.color: Qt.rgba(1, 1, 1, 0.12)
 
                             ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 8
+                                anchors.centerIn: parent
                                 spacing: 4
 
                                 Label {
@@ -494,7 +486,6 @@ Rectangle {
                         // Avg Trade Duration
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: 200
                             height: 100
                             color: Qt.rgba(1, 1, 1, 0.05)
                             radius: 8
@@ -502,8 +493,7 @@ Rectangle {
                             border.color: Qt.rgba(1, 1, 1, 0.12)
 
                             ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 8
+                                anchors.centerIn: parent
                                 spacing: 4
 
                                 Label {
@@ -528,7 +518,6 @@ Rectangle {
                         // Avg Profit per Trade
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: 200
                             height: 100
                             color: Qt.rgba(1, 1, 1, 0.05)
                             radius: 8
@@ -536,8 +525,7 @@ Rectangle {
                             border.color: Qt.rgba(1, 1, 1, 0.12)
 
                             ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 8
+                                anchors.centerIn: parent
                                 spacing: 4
 
                                 Label {

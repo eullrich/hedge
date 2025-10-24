@@ -15,7 +15,9 @@ from .indicators import (
     calculate_beta,
     calculate_volume_profile,
     detect_trend,
-    calculate_relative_strength
+    calculate_relative_strength,
+    calculate_rsi_series,
+    calculate_stochastic
 )
 from .metrics import calculate_correlation
 
@@ -33,5 +35,7 @@ __all__ = [
     'calculate_volume_profile',
     'detect_trend',
     'calculate_relative_strength',
+    'calculate_rsi_series',
+    'calculate_stochastic',
     'calculate_correlation'
 ]

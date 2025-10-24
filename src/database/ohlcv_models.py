@@ -1,7 +1,7 @@
 """Extended database models for OHLCV data and explorer features."""
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Index, Text
+    Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Index, Text, UniqueConstraint
 )
 from .models import Base
 
@@ -225,3 +225,49 @@ class DataUpdateLog(Base):
 
     def __repr__(self):
         return f"<DataUpdateLog(type={self.update_type}, status={self.status}, started={self.started_at})>"
+
+
+class CoinBasket(Base):
+    """User-defined baskets of coins for portfolio construction."""
+    __tablename__ = 'coin_baskets'
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    description = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    is_active = Column(Boolean, default=True, index=True)
+
+    # Weighting method: 'equal' or 'market_cap'
+    weighting_method = Column(String, default='equal', nullable=False)
+
+    __table_args__ = (
+        Index('idx_basket_active', 'is_active'),
+    )
+
+    def __repr__(self):
+        return f"<CoinBasket(name={self.name}, weighting={self.weighting_method})>"
+
+
+class CoinBasketMember(Base):
+    """Members of a coin basket with optional weights."""
+    __tablename__ = 'coin_basket_members'
+
+    id = Column(Integer, primary_key=True)
+    basket_id = Column(Integer, ForeignKey('coin_baskets.id', ondelete='CASCADE'), nullable=False)
+    coin_id = Column(String, ForeignKey('coins.id'), nullable=False)
+
+    # Weight for custom weighting (null means equal weight)
+    weight = Column(Float, default=1.0)
+
+    added_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index('idx_basket_member_basket', 'basket_id'),
+        Index('idx_basket_member_coin', 'coin_id'),
+        # Ensure a coin can only be added once to a basket
+        UniqueConstraint('basket_id', 'coin_id', name='uq_basket_coin'),
+    )
+
+    def __repr__(self):
+        return f"<CoinBasketMember(basket_id={self.basket_id}, coin={self.coin_id}, weight={self.weight})>"

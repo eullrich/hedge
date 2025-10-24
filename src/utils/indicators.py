@@ -95,3 +95,41 @@ def calculate_relative_strength(price_change: float, market_change: float) -> fl
 
     relative_strength = price_change - market_change
     return float(relative_strength)
+
+
+def calculate_rsi_series(prices: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Calculate RSI for entire price series (vectorized for backtesting).
+
+    Args:
+        prices: Pandas Series of prices
+        period: RSI period (default 14)
+
+    Returns:
+        Pandas Series of RSI values
+    """
+    delta = prices.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
+def calculate_stochastic(prices: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Calculate Stochastic Oscillator %K for entire price series.
+
+    Args:
+        prices: Pandas Series of prices
+        period: Lookback period (default 14)
+
+    Returns:
+        Pandas Series of Stochastic %K values (0-100)
+    """
+    lowest_low = prices.rolling(window=period).min()
+    highest_high = prices.rolling(window=period).max()
+
+    stoch_k = 100 * (prices - lowest_low) / (highest_high - lowest_low)
+    return stoch_k

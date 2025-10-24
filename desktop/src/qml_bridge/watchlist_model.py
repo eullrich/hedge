@@ -85,101 +85,129 @@ class WatchlistModel(QAbstractTableModel):
 
         try:
             self._items = []
+            from datetime import datetime, timedelta
+            from src.services.basket_calculator import BasketCalculator
+
+            calculator = BasketCalculator(self.db)
+            days = 60
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            granularity = '1hour'
 
             # Calculate live data for each watchlist pair
-            for coin1, coin2 in self._watchlist_pairs:
+            for pair in self._watchlist_pairs:
                 try:
-                    # Fetch OHLCV data from database (not API!)
-                    from datetime import datetime, timedelta
-                    days = 60
-                    end_date = datetime.now()
-                    start_date = end_date - timedelta(days=days)
+                    # Detect if pair is basket or single coins
+                    # Baskets are stored as tuple of tuples/lists
+                    # Single coins are stored as tuple of strings
+                    numerator = pair[0]
+                    denominator = pair[1]
+
+                    # Check if numerator/denominator are strings or collections
+                    is_numerator_basket = isinstance(numerator, (tuple, list))
+                    is_denominator_basket = isinstance(denominator, (tuple, list))
 
                     with self.db.get_session() as session:
-                        coin1_data = self.db.get_ohlcv_data(
-                            session,
-                            coin_id=coin1.upper(),
-                            start_date=start_date,
-                            end_date=end_date,
-                            granularity='1hour'
-                        )
-                        coin2_data = self.db.get_ohlcv_data(
-                            session,
-                            coin_id=coin2.upper(),
-                            start_date=start_date,
-                            end_date=end_date,
-                            granularity='1hour'
-                        )
+                        # Get numerator prices
+                        if is_numerator_basket:
+                            # Create temp basket for numerator
+                            num_basket_id = calculator.create_basket_from_coins(
+                                session, f"temp_num_{datetime.now().timestamp()}", list(numerator)
+                            )
+                            num_df = calculator.calculate_basket_price(
+                                session, num_basket_id, start_date, end_date, granularity
+                            )
+                        else:
+                            # Single coin
+                            coin1_data = self.db.get_ohlcv_data(
+                                session, coin_id=numerator.upper(),
+                                start_date=start_date, end_date=end_date, granularity=granularity
+                            )
+                            if not coin1_data:
+                                continue
+                            num_df = pd.DataFrame([{'timestamp': c.timestamp, 'close': c.close} for c in coin1_data])
+                            num_df.set_index('timestamp', inplace=True)
 
-                    if not coin1_data or not coin2_data:
-                        continue
+                        # Get denominator prices
+                        if is_denominator_basket:
+                            # Create temp basket for denominator
+                            denom_basket_id = calculator.create_basket_from_coins(
+                                session, f"temp_denom_{datetime.now().timestamp()}", list(denominator)
+                            )
+                            denom_df = calculator.calculate_basket_price(
+                                session, denom_basket_id, start_date, end_date, granularity
+                            )
+                        else:
+                            # Single coin
+                            coin2_data = self.db.get_ohlcv_data(
+                                session, coin_id=denominator.upper(),
+                                start_date=start_date, end_date=end_date, granularity=granularity
+                            )
+                            if not coin2_data:
+                                continue
+                            denom_df = pd.DataFrame([{'timestamp': c.timestamp, 'close': c.close} for c in coin2_data])
+                            denom_df.set_index('timestamp', inplace=True)
 
-                    # Convert to DataFrames
-                    df1 = pd.DataFrame([{
-                        'timestamp': c.timestamp,
-                        'close': c.close
-                    } for c in coin1_data])
-                    df2 = pd.DataFrame([{
-                        'timestamp': c.timestamp,
-                        'close': c.close
-                    } for c in coin2_data])
+                        if num_df is None or denom_df is None:
+                            continue
 
-                    # Align timestamps
-                    df1 = df1.set_index('timestamp')
-                    df2 = df2.set_index('timestamp')
-                    df_aligned = df1.join(df2, how='inner', lsuffix='_coin1', rsuffix='_coin2')
+                        # Align timestamps
+                        df_aligned = num_df.join(denom_df, how='inner', lsuffix='_num', rsuffix='_denom')
 
-                    if len(df_aligned) < 10:
-                        continue
+                        if len(df_aligned) < 10:
+                            continue
 
-                    # Calculate ratio
-                    ratio = df_aligned['close_coin1'] / df_aligned['close_coin2']
+                        # Calculate ratio
+                        ratio = df_aligned['close_num'] / df_aligned['close_denom']
 
-                    # Calculate correlation
-                    correlation = df_aligned['close_coin1'].corr(df_aligned['close_coin2'])
+                        # Calculate correlation
+                        correlation = df_aligned['close_num'].corr(df_aligned['close_denom'])
 
-                    # Calculate z-score
-                    ratio_mean = ratio.mean()
-                    ratio_std = ratio.std()
-                    current_ratio = ratio.iloc[-1]
-                    zscore = (current_ratio - ratio_mean) / ratio_std if ratio_std > 0 else 0
+                        # Calculate z-score
+                        ratio_mean = ratio.mean()
+                        ratio_std = ratio.std()
+                        current_ratio = ratio.iloc[-1]
+                        zscore = (current_ratio - ratio_mean) / ratio_std if ratio_std > 0 else 0
 
-                    # Normalized ratio
-                    normalized_ratio = current_ratio / ratio_mean if ratio_mean > 0 else 0
+                        # Normalized ratio
+                        normalized_ratio = current_ratio / ratio_mean if ratio_mean > 0 else 0
 
-                    # Calculate 24h and 7d ratio changes
-                    change_24h = 0.0
-                    change_7d = 0.0
+                        # Calculate 24h and 7d ratio changes
+                        change_24h = 0.0
+                        change_7d = 0.0
 
-                    # 24h ratio change (need at least 24 data points)
-                    if len(ratio) >= 24:
-                        ratio_24h_ago = ratio.iloc[-24]
-                        change_24h = ((current_ratio - ratio_24h_ago) / ratio_24h_ago) * 100
+                        if len(ratio) >= 24:
+                            ratio_24h_ago = ratio.iloc[-24]
+                            change_24h = ((current_ratio - ratio_24h_ago) / ratio_24h_ago) * 100
 
-                    # 7d ratio change (need at least 168 data points for 1h granularity)
-                    if len(ratio) >= 168:
-                        ratio_7d_ago = ratio.iloc[-168]
-                        change_7d = ((current_ratio - ratio_7d_ago) / ratio_7d_ago) * 100
+                        if len(ratio) >= 168:
+                            ratio_7d_ago = ratio.iloc[-168]
+                            change_7d = ((current_ratio - ratio_7d_ago) / ratio_7d_ago) * 100
 
-                    # Determine signal
-                    signal = "NEUTRAL"
-                    if zscore > 2.0:
-                        signal = "SHORT"
-                    elif zscore < -2.0:
-                        signal = "LONG"
+                        # Determine signal
+                        signal = "NEUTRAL"
+                        if zscore > 2.0:
+                            signal = "SHORT"
+                        elif zscore < -2.0:
+                            signal = "LONG"
 
-                    self._items.append({
-                        'pair': f"{coin1.upper()}/{coin2.upper()}",
-                        'ratio': float(normalized_ratio),
-                        'zscore': float(zscore),
-                        'correlation': float(correlation),
-                        'change_24h': float(change_24h),
-                        'change_7d': float(change_7d),
-                        'signal': signal,
-                    })
+                        # Format pair display
+                        num_display = '+'.join(numerator) if is_numerator_basket else numerator.upper()
+                        denom_display = '+'.join(denominator) if is_denominator_basket else denominator.upper()
+                        pair_display = f"{num_display}/{denom_display}"
+
+                        self._items.append({
+                            'pair': pair_display,
+                            'ratio': float(normalized_ratio),
+                            'zscore': float(zscore),
+                            'correlation': float(correlation),
+                            'change_24h': float(change_24h),
+                            'change_7d': float(change_7d),
+                            'signal': signal,
+                        })
 
                 except Exception as e:
-                    print(f"Error calculating data for {coin1}/{coin2}: {e}")
+                    print(f"Error calculating data for pair: {e}")
                     continue
 
         except Exception as e:
@@ -224,8 +252,18 @@ class WatchlistModel(QAbstractTableModel):
 
     @pyqtSlot(str, str)
     def addPair(self, coin1: str, coin2: str):
-        """Add a pair to the watchlist."""
+        """Add a pair to the watchlist (backwards compatibility)."""
         pair = (coin1.upper(), coin2.upper())
+        if pair not in self._watchlist_pairs:
+            self._watchlist_pairs.append(pair)
+            self._save_pairs()
+            self.refresh()
+
+    @pyqtSlot('QVariantList', 'QVariantList')
+    def addBasketPair(self, numerator_coins: list, denominator_coins: list):
+        """Add a basket pair to the watchlist."""
+        # Store as tuple of lists for baskets
+        pair = (tuple([c.upper() for c in numerator_coins]), tuple([c.upper() for c in denominator_coins]))
         if pair not in self._watchlist_pairs:
             self._watchlist_pairs.append(pair)
             self._save_pairs()

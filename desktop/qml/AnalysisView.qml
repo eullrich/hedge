@@ -8,6 +8,9 @@ Rectangle {
     id: root
     color: Material.background
 
+    // Signals
+    signal backtestRequested(string coin1, string coin2)
+
     // Chart size state
     property int chartHeight: 400  // Default: Normal size
     property var chartSizes: ({
@@ -431,6 +434,21 @@ Rectangle {
                         var parts = analysisModel.currentPair.split("/")
                         if (parts.length === 2) {
                             loadPairWithSettings(parts[0], parts[1])
+                        }
+                    }
+                }
+                enabled: !analysisModel.isLoading && analysisModel.currentPair !== ""
+            }
+
+            Button {
+                text: "Backtest"
+                highlighted: true
+                onClicked: {
+                    // Send to backtest page with current pair
+                    if (analysisModel.currentPair) {
+                        var parts = analysisModel.currentPair.split("/")
+                        if (parts.length === 2) {
+                            root.backtestRequested(parts[0], parts[1])
                         }
                     }
                 }

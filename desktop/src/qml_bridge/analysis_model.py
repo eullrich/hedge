@@ -251,11 +251,11 @@ class AnalysisModel(QObject):
     @pyqtSlot(str, str, str)
     def loadPair(self, coin1: str, coin2: str, timeframe: str = '1d'):
         """
-        Load analysis data for a trading pair.
+        Load analysis data for a trading pair or basket pair.
 
         Args:
-            coin1: First coin symbol
-            coin2: Second coin symbol
+            coin1: First coin symbol or basket (e.g., "BTC" or "BTC+ETH")
+            coin2: Second coin symbol or basket (e.g., "SOL" or "SOL+DOGE")
             timeframe: Analysis timeframe (1h, 4h, 1d, 1w)
         """
         self._is_loading = True
@@ -264,15 +264,12 @@ class AnalysisModel(QObject):
         try:
             import pandas as pd
             import numpy as np
-            from datetime import datetime
+            from datetime import datetime, timedelta
 
             self._coin1 = coin1.upper()
             self._coin2 = coin2.upper()
             self._current_pair = f"{self._coin1}/{self._coin2}"
             self.currentPairChanged.emit()
-
-            # Fetch OHLCV data from database (not API!)
-            from datetime import timedelta
 
             # Map timeframe to days and granularity
             timeframe_config = {
@@ -287,63 +284,126 @@ class AnalysisModel(QObject):
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days)
 
+            # Check if coin1 or coin2 are baskets (contain "+")
+            is_coin1_basket = '+' in self._coin1
+            is_coin2_basket = '+' in self._coin2
+
             with self.db.get_session() as session:
-                coin1_data = self.db.get_ohlcv_data(
-                    session,
-                    coin_id=self._coin1,
-                    start_date=start_date,
-                    end_date=end_date,
-                    granularity=granularity
-                )
-                coin2_data = self.db.get_ohlcv_data(
-                    session,
-                    coin_id=self._coin2,
-                    start_date=start_date,
-                    end_date=end_date,
-                    granularity=granularity
-                )
+                if is_coin1_basket:
+                    # Calculate basket price for coin1
+                    from src.services.basket_calculator import BasketCalculator
+                    calculator = BasketCalculator(self.db)
 
-            if not coin1_data or not coin2_data:
-                self.errorOccurred.emit(f"No database data for {self._current_pair}. Run 'Force Refresh' first.")
-                self._is_loading = False
-                self.isLoadingChanged.emit()
-                return
+                    coin1_list = [c.strip() for c in self._coin1.split('+')]
+                    basket_id = calculator.create_basket_from_coins(
+                        session,
+                        f"temp_analysis_{datetime.now().timestamp()}",
+                        coin1_list
+                    )
+                    if not basket_id:
+                        self.errorOccurred.emit(f"Failed to create basket for {self._coin1}")
+                        self._is_loading = False
+                        self.isLoadingChanged.emit()
+                        return
 
-            # Convert ORM objects to DataFrames
-            df1 = pd.DataFrame([{
-                'timestamp': c.timestamp,
-                'open': c.open,
-                'high': c.high,
-                'low': c.low,
-                'close': c.close,
-                'volume': c.volume
-            } for c in coin1_data])
-            df2 = pd.DataFrame([{
-                'timestamp': c.timestamp,
-                'open': c.open,
-                'high': c.high,
-                'low': c.low,
-                'close': c.close,
-                'volume': c.volume
-            } for c in coin2_data])
+                    df1 = calculator.calculate_basket_price(
+                        session, basket_id, start_date, end_date, granularity
+                    )
+                    if df1 is None:
+                        self.errorOccurred.emit(f"No data for basket {self._coin1}")
+                        self._is_loading = False
+                        self.isLoadingChanged.emit()
+                        return
+                else:
+                    # Single coin - fetch OHLCV data
+                    coin1_data = self.db.get_ohlcv_data(
+                        session,
+                        coin_id=self._coin1,
+                        start_date=start_date,
+                        end_date=end_date,
+                        granularity=granularity
+                    )
+                    if not coin1_data:
+                        self.errorOccurred.emit(f"No data for {self._coin1}")
+                        self._is_loading = False
+                        self.isLoadingChanged.emit()
+                        return
 
-            # Align data
-            min_len = min(len(df1), len(df2))
-            df1 = df1.tail(min_len)
-            df2 = df2.tail(min_len)
+                    df1 = pd.DataFrame([{
+                        'timestamp': c.timestamp,
+                        'open': c.open,
+                        'high': c.high,
+                        'low': c.low,
+                        'close': c.close,
+                        'volume': c.volume
+                    } for c in coin1_data])
+                    df1.set_index('timestamp', inplace=True)
+
+                if is_coin2_basket:
+                    # Calculate basket price for coin2
+                    from src.services.basket_calculator import BasketCalculator
+                    calculator = BasketCalculator(self.db)
+
+                    coin2_list = [c.strip() for c in self._coin2.split('+')]
+                    basket_id = calculator.create_basket_from_coins(
+                        session,
+                        f"temp_analysis_{datetime.now().timestamp()}",
+                        coin2_list
+                    )
+                    if not basket_id:
+                        self.errorOccurred.emit(f"Failed to create basket for {self._coin2}")
+                        self._is_loading = False
+                        self.isLoadingChanged.emit()
+                        return
+
+                    df2 = calculator.calculate_basket_price(
+                        session, basket_id, start_date, end_date, granularity
+                    )
+                    if df2 is None:
+                        self.errorOccurred.emit(f"No data for basket {self._coin2}")
+                        self._is_loading = False
+                        self.isLoadingChanged.emit()
+                        return
+                else:
+                    # Single coin - fetch OHLCV data
+                    coin2_data = self.db.get_ohlcv_data(
+                        session,
+                        coin_id=self._coin2,
+                        start_date=start_date,
+                        end_date=end_date,
+                        granularity=granularity
+                    )
+                    if not coin2_data:
+                        self.errorOccurred.emit(f"No data for {self._coin2}")
+                        self._is_loading = False
+                        self.isLoadingChanged.emit()
+                        return
+
+                    df2 = pd.DataFrame([{
+                        'timestamp': c.timestamp,
+                        'open': c.open,
+                        'high': c.high,
+                        'low': c.low,
+                        'close': c.close,
+                        'volume': c.volume
+                    } for c in coin2_data])
+                    df2.set_index('timestamp', inplace=True)
+
+            # Align data by timestamp (inner join)
+            aligned_df = df1.join(df2, how='inner', lsuffix='_coin1', rsuffix='_coin2')
 
             # Check for minimum data points
-            if min_len < 10:
-                print(f"⚠️ Insufficient data for {self._current_pair}: only {min_len} candles")
+            if len(aligned_df) < 10:
+                print(f"⚠️ Insufficient data for {self._current_pair}: only {len(aligned_df)} candles")
                 print(f"💡 Try using a shorter timeframe (1h or 4h) for newly listed coins")
-                self.errorOccurred.emit(f"Insufficient data for {self._current_pair} (only {min_len} candles). Try 1h or 4h timeframe for new coins.")
+                self.errorOccurred.emit(f"Insufficient data for {self._current_pair} (only {len(aligned_df)} candles). Try 1h or 4h timeframe for new coins.")
                 self._is_loading = False
                 self.isLoadingChanged.emit()
                 return
 
             # Calculate ratio and z-score
-            coin1_prices = df1['close'].values
-            coin2_prices = df2['close'].values
+            coin1_prices = aligned_df['close_coin1'].values
+            coin2_prices = aligned_df['close_coin2'].values
             ratio = coin1_prices / coin2_prices
 
             # Calculate correlation
@@ -454,7 +514,8 @@ class AnalysisModel(QObject):
             normalized_ratio = (ratio / ratio[0]) * 100
 
             # Convert timestamps to milliseconds (Unix epoch * 1000 for QML)
-            timestamps = df1['timestamp'].values
+            # Use the aligned_df index which contains the timestamps
+            timestamps = aligned_df.index.values
 
             # Convert timestamps - handle both string and Timestamp objects
             def to_millis(ts):
@@ -478,10 +539,10 @@ class AnalysisModel(QObject):
             self._coin2_values = [float(p) for p in norm2]
 
             # Calculate spread OHLC (spread = coin1_price - coin2_price)
-            # We already have close values, now calculate open/high/low from the full OHLC data
-            spread_open = df1['open'].values - df2['open'].values
-            spread_high = df1['high'].values - df2['high'].values
-            spread_low = df1['low'].values - df2['low'].values
+            # Use aligned data from aligned_df
+            spread_open = aligned_df['open_coin1'].values - aligned_df['open_coin2'].values
+            spread_high = aligned_df['high_coin1'].values - aligned_df['high_coin2'].values
+            spread_low = aligned_df['low_coin1'].values - aligned_df['low_coin2'].values
             spread_close = coin1_prices - coin2_prices  # Already calculated as ratio denominator
 
             # Normalize spread to start at 100 (like ratio)
@@ -491,7 +552,7 @@ class AnalysisModel(QObject):
             normalized_spread_low = (spread_low / base_spread) * 100
             normalized_spread_close = (spread_close / base_spread) * 100
 
-            self._spread_timestamps = [int(pd.Timestamp(ts).timestamp() * 1000) for ts in timestamps]
+            self._spread_timestamps = [to_millis(ts) for ts in timestamps]
             self._spread_open = [float(s) for s in normalized_spread_open]
             self._spread_high = [float(s) for s in normalized_spread_high]
             self._spread_low = [float(s) for s in normalized_spread_low]
